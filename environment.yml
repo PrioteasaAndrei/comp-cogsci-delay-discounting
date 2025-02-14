@@ -1,0 +1,13 @@
+name: humml
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - ipykernel
+  - u8darts-all
+  - conda-forge::polars
+  - jax
+  - conda-forge::optuna
+  - seaborn
+  - opencv
+prefix: /opt/miniconda3/envs/humml
