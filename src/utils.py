@@ -30,7 +30,7 @@ def read_dd_data(path: str) -> pd.DataFrame:
         data_train = data_train.rename(columns={'certOutcome': 'rcert',
                                                 'uncOutcome': 'runcert',
                                                 'action (1=certain, 2=uncertain, 0=missing)': 'choice',
-                                                'p_cert': 'experimental_condition', ## TODO ???
+                                                'p_cert': 'experimental_condition',
                                                 'outcome prob.': 'event_prob',
                                                 'condition (1=reward,2=loss)': 'condition',
                                                 'RT': 'rt',
