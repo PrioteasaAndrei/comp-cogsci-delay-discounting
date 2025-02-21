@@ -1,13 +1,5 @@
 This is the final project for the Computational Cognitive Science class, WS24/25, University of Heidelberg.
 
-# Things to consider
-
-- longer reaction time usually means harder choice to make (e.g. risk aversion)
-- smaller reaction time doesn't necessary mean easier decision (e.g. impulsiveness)
-- same choice modeling as in class, only reaction time modelling differs.
-- only two modalities used
-- think about a probability weighting function to model subjective probabilities for impulsivness and risk aversion (use a measure of objective value for each value probabilistic vs immediate and from that abstract personal subjectivity). put this into the choice not into the response times (see course 4).
-
 # Setup
 
 ```bash
@@ -16,18 +8,25 @@ chmod +x setup.sh
 conda activate pd-ws24
 ```
 
-# Good practice
+# Observations
 
-- try to use pyMC(https://www.pymc.io/welcome.html) for the modeling part
+- using standardization for the response times and the choices results in few divergences (2,3), all metrics look good but the parameters are close to 0 and the prediction is close to 0.5 for most of them.
+
+- using the loss aversion parameter results in more divergences (20); we have a change in the distribution of the choice probabilities, they are more centered around 0.6 than before and some are close to 1. (we get a mean of 0.6)
+REACTION TIME PREDICTION DOESNT WORK - outputs the same value for each trial of a participant
+
 
 # TODOS
 
-- [ ] use MTF as an approach for combining multimodal data
-- [ ] implement hierachical modeling, perhaps with PyMC for sampling the join posterior
 - [ ] implement K-fold validation
     - [ ] implement in-sample and out of sample error and do box plots with whiskers (i.e. mean the predicitons since we will have a probailistic model and for out of sample do the same with CV)
     - [ ] tune hyperparams on the mean validation error from all folds
 - [ ] OPTIONAL: active learning
 - [ ] model comparison with AIC and BIC (minimize to get the best)
 - [ ] research meaningful statistical tests that can be used to asses the influence of certain parameters of our models
-- [ ] take condition into consideration for the sign of certain parameters
+
+
+# Completed 
+
+- [x] implement hierachical modeling, perhaps with PyMC for sampling the join posterior
+- [x] take condition into consideration for the sign of certain parameters
