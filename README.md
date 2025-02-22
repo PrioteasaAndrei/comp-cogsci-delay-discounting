@@ -15,6 +15,7 @@ conda activate pd-ws24
 - using the loss aversion parameter results in more divergences (20); we have a change in the distribution of the choice probabilities, they are more centered around 0.6 than before and some are close to 1. (we get a mean of 0.6)
 REACTION TIME PREDICTION DOESNT WORK - outputs the same value for each trial of a participant
 
+- using non standardize data results in more divergences (100) and the model is not able to predict the reaction times at all, but choice prediction are better (mean of 0.62)
 
 # TODOS
 
