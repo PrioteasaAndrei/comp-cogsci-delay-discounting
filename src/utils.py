@@ -8,8 +8,9 @@ import glob
 import os
 from typing import Tuple
 import arviz as az
+import matplotlib.pyplot as plt
 
-def read_dd_data(path: str, standardize: bool = True) -> pd.DataFrame:
+def read_dd_data(path: str, standardize: bool = True, reduced_data: bool = False) -> pd.DataFrame:
     """
     Read data from the given path and return a DataFrame.
 
@@ -58,21 +59,30 @@ def read_dd_data(path: str, standardize: bool = True) -> pd.DataFrame:
     # make choice 0 be certain and 1 be uncertain
     df['choice'] = df['choice'] - 1
 
+    # Convert participant IDs to integer indices
+    participants = df["participant"].unique()
+    n_participants = len(participants)
+    participant_idx = {pid: i for i, pid in enumerate(participants)}
+    df["participant_idx"] = df["participant"].map(participant_idx)
+
+
     # Check for NaN values in all columns
     if df.isna().any().any():
         nan_columns = df.columns[df.isna().any()].tolist()
         raise ValueError(f"NaN values found in columns: {nan_columns}")
+    
+    if reduced_data:
+        # Limit to 10 participants
+        unique_participants = df['participant'].unique()[:10]
+        df = df[df['participant'].isin(unique_participants)]
+        
+        # Limit to 100 trials per participant
+        df = df.groupby('participant').head(100).reset_index(drop=True)
 
     if standardize:
-        # Extract participant information
-        participants = df["participant"].unique()
-        n_participants = len(participants)
-
-        # Convert participant IDs to integer indices
-        participant_idx = {pid: i for i, pid in enumerate(participants)}
-        df["participant_idx"] = df["participant"].map(participant_idx)
-
         # used later for unscaling
+        # need to log them so that they are normally distributed and can apply standardization
+        df["rt"] = np.log(df["rt"])
         scaling_factors = {
             "rt_mean": df['rt'].mean(), "rt_std": df['rt'].std(),
             "rcert_mean": df['rcert'].mean(), "rcert_std": df['rcert'].std(),
@@ -81,13 +91,14 @@ def read_dd_data(path: str, standardize: bool = True) -> pd.DataFrame:
 
         df["rcert"] = (df["rcert"] - scaling_factors["rcert_mean"]) / scaling_factors["rcert_std"]
         df["runcert"] = (df["runcert"] - scaling_factors["runcert_mean"]) / scaling_factors["runcert_std"]
-        # need to log them so that they are normally distributed and can apply standardization
-        df["rt"] = np.log(df["rt"])
+
         df["rt"] = (df["rt"] - scaling_factors["rt_mean"]) / scaling_factors["rt_std"]
 
         return df, scaling_factors
 
     return df, None
+
+
 
 
 def split_train_test(df, test_size: float = 0.2) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -181,3 +192,76 @@ def check_convergence_rhat(trace, threshold=1.05):
         print("\nParameters requiring attention:")
         for param in problematic_params:
             print(f"  - {param}")
+
+
+
+
+def plot_data_distributions(df):
+    """
+    Plot histograms of the raw data distributions.
+    """
+    # Create histograms of the raw data
+
+    # Extract observed data
+    rcert = df["rcert"].values
+    runcert = df["runcert"].values
+    participant_ids = df["participant_idx"].values  # Integer IDs
+    event_prob = df["event_prob"].values
+    choice_data = df["choice"].astype(int).values  # Ensure it's an integer for Bernoulli
+    rt_data = df["rt"].values
+
+    # Create histograms of the raw data
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+    fig.suptitle('Distribution of Raw Data')
+
+    # Flatten axes for easier iteration
+    axes = axes.flatten()
+
+    # Plot histograms
+    axes[0].hist(rcert, bins=30)
+    axes[0].set_title('Certain Reward/Loss')
+    axes[0].set_xlabel('Value')
+    axes[0].set_ylabel('Count')
+
+    axes[1].hist(runcert, bins=30)
+    axes[1].set_title('Uncertain Reward/Loss')
+    axes[1].set_xlabel('Value')
+    axes[1].set_ylabel('Count')
+
+    axes[2].hist(event_prob, bins=30)
+    axes[2].set_title('Event Probability')
+    axes[2].set_xlabel('Probability')
+    axes[2].set_ylabel('Count')
+
+    # Calculate proportions for binary variable
+    unique_values, counts = np.unique(choice_data, return_counts=True)
+    proportions = counts / len(choice_data)
+
+    # Create bar plot for binary variable
+    axes[3].bar(['Certain (0)', 'Uncertain (1)'], proportions)
+    axes[3].set_title('Choice Distribution')
+    axes[3].set_xlabel('Choice')
+    axes[3].set_ylabel('Proportion')
+    axes[3].set_ylim(0, 1)  # Set y-axis from 0 to 1 for proportions
+
+    axes[4].hist(rt_data, bins=30)
+    axes[4].set_title('Response Time')
+    axes[4].set_xlabel('Time (ms)')
+    axes[4].set_ylabel('Count')
+
+    # Adjust layout to prevent overlap
+    plt.tight_layout()
+
+
+def split_data_k_fold(df: pd.DataFrame, k: int = 5) -> List[pd.DataFrame]:
+    """
+    Split the data into k-fold cross-validation sets.
+    # TODO: think whether it makes sense to take entire participants or only some of their data
+    """
+    # Create k-fold cross-validation sets
+
+    # TODO: random indexes can be used as we used a seed for the rng
+    # TODO: splits should be roughly the same size
+    
+
+    return None
