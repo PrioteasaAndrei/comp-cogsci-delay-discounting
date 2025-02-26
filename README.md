@@ -15,18 +15,23 @@ conda activate pd-ws24
 - using the loss aversion parameter results in more divergences (20); we have a change in the distribution of the choice probabilities, they are more centered around 0.6 than before and some are close to 1. (we get a mean of 0.6)
 REACTION TIME PREDICTION DOESNT WORK - outputs the same value for each trial of a participant
 
+- decision dificulty is around 0.1 or less, that is too small.
+- the values for the standardized reaction time are between -1.745 and -1.756 which is a too small range
+
 
 # TODOS
-
+- [ ] in sample vs out of sample error computation
+- [ ] make some statistical tests about the influence of the parameters on the choice probabilities and reaction times (maybe about beta 1)
 - [ ] implement K-fold validation
     - [ ] implement in-sample and out of sample error and do box plots with whiskers (i.e. mean the predicitons since we will have a probailistic model and for out of sample do the same with CV)
     - [ ] tune hyperparams on the mean validation error from all folds
 - [ ] OPTIONAL: active learning
 - [ ] model comparison with AIC and BIC (minimize to get the best)
-- [ ] research meaningful statistical tests that can be used to asses the influence of certain parameters of our models
+
 
 
 # Completed 
 
 - [x] implement hierachical modeling, perhaps with PyMC for sampling the join posterior
 - [x] take condition into consideration for the sign of certain parameters
+- [x] inmulteste dificulty cu 5 sa fie mai spread out.
