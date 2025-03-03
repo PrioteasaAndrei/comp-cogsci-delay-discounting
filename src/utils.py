@@ -72,10 +72,8 @@ def read_dd_data(path: str, standardize: bool = True, reduced_data: bool = False
         raise ValueError(f"NaN values found in columns: {nan_columns}")
     
     if reduced_data:
-        # Limit to 10 participants
-        unique_participants = df['participant'].unique()[:10]
+        unique_participants = df['participant'].unique()[:30]
         df = df[df['participant'].isin(unique_participants)]
-        
         # Limit to 100 trials per participant
         df = df.groupby('participant').head(100).reset_index(drop=True)
 
@@ -105,18 +103,15 @@ def split_train_test(df, test_size: float = 0.2) -> Tuple[pd.DataFrame, pd.DataF
     """
     Split the data into training and test sets.
 
-    TODO: not checked
     """
-    # Create train/test split by dropping 20% of trials per participant
     test_indices = []
 
     for participant in df['participant'].unique():
         participant_data = df[df['participant'] == participant]
         n_trials = len(participant_data)
-        n_test = int(test_size * n_trials)  # 20% of trials
+        n_test = int(test_size * n_trials) 
         
-        # Randomly sample indices for test set
-        participant_test_indices = participant_data.sample(n=n_test).index
+        participant_test_indices = participant_data.iloc[-n_test:].index
         test_indices.extend(participant_test_indices)
 
     # Create train and test dataframes
@@ -253,15 +248,333 @@ def plot_data_distributions(df):
     plt.tight_layout()
 
 
-def split_data_k_fold(df: pd.DataFrame, k: int = 5) -> List[pd.DataFrame]:
-    """
-    Split the data into k-fold cross-validation sets.
-    # TODO: think whether it makes sense to take entire participants or only some of their data
-    """
-    # Create k-fold cross-validation sets
 
-    # TODO: random indexes can be used as we used a seed for the rng
-    # TODO: splits should be roughly the same size
+def normal_to_lognormal_std(mu_Y, sigma_Y):
+    """
+    Convert normal standard deviation to log-normal standard deviation with numerical stability.
     
+    Parameters:
+    - mu_Y: Mean of the underlying normal distribution.
+    - sigma_Y: Standard deviation of the underlying normal distribution.
+    
+    Returns:
+    - sigma_X: Standard deviation of the log-normal distribution.
+    """
+    # Clip values to prevent overflow
+    mu_Y = np.clip(mu_Y, -100, 100)
+    sigma_Y = np.clip(sigma_Y, 0, 10)  # standard deviation should be positive
+    
+    try:
+        # Use log1p for numerical stability when computing exp(sigma_Y^2) - 1
+        variance_term = np.log1p(np.exp(np.minimum(sigma_Y**2, 100)) - 1)
+        
+        # Compute mu_X with clipping
+        exp_term = np.clip(mu_Y + (sigma_Y**2) / 2, -100, 100)
+        mu_X = np.exp(exp_term)
+        
+        # Compute final sigma
+        sigma_X = mu_X * np.sqrt(np.exp(variance_term))
+        
+        return sigma_X
+    except Exception as e:
+        print(f"Error in conversion: mu_Y={mu_Y}, sigma_Y={sigma_Y}")
+        print(f"Exception: {e}")
+        return np.nan
 
-    return None
+def create_comprehensive_validation_split(df, participant_holdout_ratio=0.2, trial_holdout_ratio=0.2, random_seed=42):
+    """
+    Create a comprehensive validation split that tests both generalization to new participants
+    and generalization to new trials from existing participants.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The full dataset
+    participant_holdout_ratio : float, default=0.2
+        Proportion of participants to completely hold out for testing
+    trial_holdout_ratio : float, default=0.2
+        Proportion of trials to hold out from participants that are included in training
+    random_seed : int, default=42
+        Random seed for reproducibility
+    
+    Returns:
+    --------
+    dict
+        Dictionary containing:
+        - 'train_set': DataFrame with training data (subset of participants and subset of trials)
+        - 'test_set_new_participants': DataFrame with data from completely new participants
+        - 'test_set_new_trials': DataFrame with new trials from participants in the training set
+        - 'test_set_combined': DataFrame combining both test sets
+    """
+    np.random.seed(random_seed)
+    
+    # Get unique participants
+    unique_participants = df['participant_idx'].unique()
+    n_participants = len(unique_participants)
+    
+    # Determine how many participants to hold out completely
+    n_holdout_participants = max(1, int(n_participants * participant_holdout_ratio))
+    
+    # Randomly select participants to hold out completely
+    holdout_participants = np.random.choice(
+        unique_participants, 
+        size=n_holdout_participants, 
+        replace=False
+    )
+    
+    # Participants to include in training (with some trials held out)
+    training_participants = np.setdiff1d(unique_participants, holdout_participants)
+    
+    # Create test set of completely new participants
+    test_set_new_participants = df[df['participant_idx'].isin(holdout_participants)].copy()
+    
+    # Initialize DataFrames for training set and test set of new trials
+    train_set_parts = []
+    test_set_new_trials_parts = []
+    
+    # For each training participant, split their trials
+    for participant in training_participants:
+        participant_data = df[df['participant_idx'] == participant].copy()
+        
+        # Shuffle the data
+        participant_data = participant_data.sample(frac=1, random_state=random_seed).reset_index(drop=True)
+        
+        # Calculate split point
+        n_trials = len(participant_data)
+        n_test_trials = max(1, int(n_trials * trial_holdout_ratio))
+        
+        # Split the data
+        train_trials = participant_data.iloc[:-n_test_trials].copy()
+        test_trials = participant_data.iloc[-n_test_trials:].copy()
+        
+        # Add to the respective sets
+        train_set_parts.append(train_trials)
+        test_set_new_trials_parts.append(test_trials)
+    
+    # Combine the parts
+    train_set = pd.concat(train_set_parts).reset_index(drop=True)
+    test_set_new_trials = pd.concat(test_set_new_trials_parts).reset_index(drop=True)
+    
+    # Create a combined test set
+    test_set_combined = pd.concat([test_set_new_participants, test_set_new_trials]).reset_index(drop=True)
+    
+    return {
+        'train_set': train_set,
+        'test_set_new_participants': test_set_new_participants.reset_index(drop=True),
+        'test_set_new_trials': test_set_new_trials,
+        'test_set_combined': test_set_combined
+    }
+
+
+def create_k_fold_comprehensive_validation(df, k=5, participant_holdout_ratio=0.2, trial_holdout_ratio=0.2):
+    """
+    Create k different comprehensive validation splits for robust cross-validation.
+    Each fold has different participants held out and different train/test splits.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The full dataset
+    k : int, default=5
+        Number of folds to create
+    participant_holdout_ratio : float, default=0.2
+        Proportion of participants to completely hold out for testing in each fold
+    trial_holdout_ratio : float, default=0.2
+        Proportion of trials to hold out from participants included in training
+    
+    Returns:
+    --------
+    list
+        List of dictionaries, each containing train/test splits for one fold
+    """
+    all_folds = []
+    
+    for fold in range(k):
+        # Create split with a different random seed for each fold
+        split = create_comprehensive_validation_split(
+            df, 
+            participant_holdout_ratio=participant_holdout_ratio,
+            trial_holdout_ratio=trial_holdout_ratio,
+            random_seed=42+fold  # Different seed for each fold
+        )
+        
+        # Add fold index to the split dictionary
+        split['fold'] = fold
+        all_folds.append(split)
+    
+    return all_folds
+
+def interpret_beta2_significance(results):
+    """
+    Provides a comprehensive interpretation of the test_beta2_significance results.
+    
+    Parameters:
+    -----------
+    results : dict
+        Dictionary returned by test_beta2_significance, containing:
+        - 'group_level_significant': Boolean indicating if group-level β₂ is significant
+        - 'individual_significant_proportion': Proportion of participants with significant β₂
+        - 'beta2_mean': Mean of the group-level β₂ parameter
+        - 'beta2_hdi': 95% HDI interval for group-level β₂
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing interpretation and recommendations
+    """
+    # Extract key metrics
+    group_significant = results['group_level_significant']
+    indiv_proportion = results['individual_significant_proportion']
+    beta2_mean = results['beta2_mean']
+    beta2_hdi = results['beta2_hdi']
+    zero_in_hdi = (beta2_hdi[0] <= 0 <= beta2_hdi[1])
+    
+    # Determine evidence strength
+    if group_significant and indiv_proportion > 0.5:
+        evidence = "strong evidence"
+    elif group_significant or indiv_proportion > 0.3:
+        evidence = "moderate evidence"
+    elif indiv_proportion > 0.1:
+        evidence = "weak evidence"
+    else:
+        evidence = "no significant evidence"
+    
+    # Determine effect direction if significant
+    if abs(beta2_mean) > 0.01 and not zero_in_hdi:
+        if beta2_mean > 0:
+            effect = ("positive quadratic effect, suggesting reaction times increase for "
+                     "moderately difficult decisions (inverted U-shape)")
+        else:
+            effect = ("negative quadratic effect, suggesting reaction times decrease for "
+                     "moderately difficult decisions (U-shape)")
+    else:
+        effect = "minimal quadratic effect that is practically indistinguishable from zero"
+    
+    # Generate summary interpretation
+    if group_significant:
+        summary = (f"The analysis shows {evidence} that the quadratic term (β₂) significantly "
+                  f"improves your reaction time model. There is a {effect}.")
+    else:
+        summary = (f"The analysis shows {evidence} that the quadratic term (β₂) improves "
+                  f"your reaction time model. There is a {effect}.")
+    
+    # Generate detailed explanation
+    details = []
+    details.append(f"Group-level β₂ mean: {beta2_mean:.4f}")
+    details.append(f"Group-level β₂ 95% HDI: [{beta2_hdi[0]:.4f}, {beta2_hdi[1]:.4f}]")
+    
+    if zero_in_hdi:
+        details.append("The 95% HDI interval contains zero, meaning we cannot reject the null hypothesis that β₂ = 0 at the group level.")
+    else:
+        details.append("The 95% HDI interval excludes zero, providing evidence against the null hypothesis that β₂ = 0 at the group level.")
+    
+    if indiv_proportion < 0.2:
+        details.append(f"Only {indiv_proportion*100:.1f}% of participants showed a significant individual effect, suggesting the quadratic pattern is rare in your sample.")
+    else:
+        details.append(f"{indiv_proportion*100:.1f}% of participants showed a significant individual effect.")
+    
+    # Generate practical recommendations
+    if group_significant or indiv_proportion > 0.3:
+        recommendations = [
+            "Include the quadratic term in your final model",
+            "Examine individual differences in the quadratic effect",
+            "Consider how this nonlinear effect aligns with theoretical expectations"
+        ]
+    else:
+        recommendations = [
+            "The linear model is likely sufficient; added complexity of the quadratic model is not justified",
+            "Reaction times appear to change approximately linearly with decision difficulty",
+            "Consider exploring alternative predictors or model formulations"
+        ]
+    
+    if 0.1 < indiv_proportion < 0.3:
+        recommendations.append("Investigate participants with significant quadratic effects separately - they may have different decision strategies")
+    
+    # Compile complete interpretation
+    interpretation = {
+        "summary": summary,
+        "details": details,
+        "recommendations": recommendations,
+        "evidence_strength": evidence,
+        "effect_direction": "neutral" if zero_in_hdi else ("positive" if beta2_mean > 0 else "negative"),
+        "model_selection": "quadratic" if (group_significant or indiv_proportion > 0.3) else "linear"
+    }
+    
+    return interpretation
+
+
+def print_beta2_interpretation(results):
+    """
+    Prints a nicely formatted interpretation of the test_beta2_significance results.
+    
+    Parameters:
+    -----------
+    results : dict
+        Dictionary returned by test_beta2_significance
+    """
+    interp = interpret_beta2_significance(results)
+    
+    print("\n" + "="*80)
+    print(" QUADRATIC TERM (β₂) SIGNIFICANCE ANALYSIS ".center(80, "="))
+    print("="*80 + "\n")
+    
+    print("SUMMARY:")
+    print(interp["summary"])
+    print()
+    
+    print("DETAILED ANALYSIS:")
+    for detail in interp["details"]:
+        print(f"• {detail}")
+    print()
+    
+    print("RECOMMENDATIONS:")
+    for i, rec in enumerate(interp["recommendations"], 1):
+        print(f"{i}. {rec}")
+    print()
+    
+    print("MODEL SELECTION:")
+    if interp["model_selection"] == "quadratic":
+        print("✓ The quadratic model is supported by the data")
+    else:
+        print("✓ The linear model is sufficient; quadratic term not justified")
+    
+    print("\n" + "="*80 + "\n")
+
+def test_beta2_significance(trace):
+    """
+    Test if the quadratic parameter (beta2) is significantly different from zero
+    by examining posterior distributions.
+    """
+    # Extract β₂ posterior samples (both group-level and individual-level)
+    mu_beta2 = trace.posterior["mu_beta2"].values.flatten()
+    individual_beta2 = trace.posterior["beta2"].values
+    
+    # Group-level analysis
+    beta2_mean = np.mean(mu_beta2)
+    beta2_hdi = az.hdi(mu_beta2, hdi_prob=0.95)
+    zero_in_hdi = (beta2_hdi[0] <= 0 <= beta2_hdi[1])
+    
+    # Individual-level analysis
+    n_participants = individual_beta2.shape[2]
+    significant_participants = 0
+    
+    for p in range(n_participants):
+        participant_beta2 = individual_beta2[:, :, p].flatten()
+        p_hdi = az.hdi(participant_beta2, hdi_prob=0.95)
+        if not (p_hdi[0] <= 0 <= p_hdi[1]):
+            significant_participants += 1
+    
+    proportion_significant = significant_participants / n_participants
+    
+    # Print results
+    print(f"Group-level β₂ mean: {beta2_mean:.4f}")
+    print(f"Group-level β₂ 95% HDI: [{beta2_hdi[0]:.4f}, {beta2_hdi[1]:.4f}]")
+    print(f"Zero within HDI: {zero_in_hdi}")
+    print(f"Participants with significant β₂: {significant_participants}/{n_participants} ({proportion_significant*100:.1f}%)")
+    
+    return {
+        "group_level_significant": not zero_in_hdi,
+        "individual_significant_proportion": proportion_significant,
+        "beta2_mean": beta2_mean,
+        "beta2_hdi": beta2_hdi
+    }
